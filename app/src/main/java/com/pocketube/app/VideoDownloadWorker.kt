@@ -11,7 +11,6 @@ import androidx.work.WorkerParameters
 import com.yausername.youtubedl_android.YoutubeDL
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
@@ -53,9 +52,9 @@ class VideoDownloadWorker(context: Context, params: WorkerParameters) : Coroutin
                     return@withPermit
                 repository.change(itemId, runId) { it.copy(status = DownloadStatus.DOWNLOADING, error = "") }
                 val directory = repository.directory(itemId)
-                val request = DownloadRequestFactory.create(item, directory, File(applicationContext.cacheDir, "yt-dlp"))
                 var lastUpdate = 0L
-                runInterruptible {
+                app.engine.execute(app) {
+                    val request = DownloadRequestFactory.create(item, directory, File(applicationContext.cacheDir, "yt-dlp"))
                     YoutubeDL.getInstance().execute(request, runId) { progress, eta, _ ->
                         if (System.currentTimeMillis() - lastUpdate > 700) {
                             lastUpdate = System.currentTimeMillis()
@@ -86,7 +85,7 @@ class VideoDownloadWorker(context: Context, params: WorkerParameters) : Coroutin
         } catch (e: Exception) {
             repository.change(itemId, runId) {
                 if (it.status == DownloadStatus.PAUSED) it else it.copy(status = DownloadStatus.ERROR,
-                    error = e.message?.takeLast(800) ?: "Не удалось скачать файл")
+                    error = DownloadErrors.message(e))
             }
             Result.failure()
         } finally {

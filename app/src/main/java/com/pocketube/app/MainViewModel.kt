@@ -13,7 +13,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withContext
 import java.io.File
 
@@ -46,8 +45,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             mutableState.value = mutableState.value.copy(loading = true, error = null, preview = null)
             try {
                 val url = YouTubeUrl.normalize(mutableState.value.link)
-                app.engine.initialize(app)
-                val info = runInterruptible(Dispatchers.IO) {
+                val info = app.engine.execute(app) {
                     YoutubeDL.getInstance().getInfo(YoutubeDLRequest(url).apply {
                         addOption("--no-playlist")
                         addOption("--socket-timeout", 20)
@@ -65,7 +63,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } catch (e: Exception) {
                 mutableState.value = mutableState.value.copy(loading = false,
                     error = if (e is IllegalArgumentException) e.message else
-                        "Не удалось получить видео. Проверьте интернет и доступность ссылки. Попробуйте обновить загрузчик кнопкой вверху.\n${e.message.orEmpty().takeLast(350)}")
+                        "Не удалось получить видео. ${DownloadErrors.message(e)}")
             }
         }
     }
@@ -120,8 +118,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         mutableState.value = mutableState.value.copy(updating = true)
         viewModelScope.launch {
             try {
-                app.engine.update(app)
-                mutableMessages.emit("Загрузчик обновлён")
+                val version = app.engine.update(app)
+                mutableMessages.emit("Загрузчик $version готов")
             } catch (e: Exception) { mutableMessages.emit("Не удалось обновить: ${e.message.orEmpty().take(150)}") }
             finally { mutableState.value = mutableState.value.copy(updating = false) }
         }
