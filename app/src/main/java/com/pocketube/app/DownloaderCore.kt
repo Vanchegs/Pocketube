@@ -7,12 +7,14 @@ import java.io.InputStream
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
-import java.util.zip.ZipFile
+import java.util.zip.ZipInputStream
 
 object DownloaderCore {
     const val BUNDLED_VERSION = "2026.10.26"
     const val BUNDLED_SHA256 = "e51e69e89489f199530f13d32a4342da3ddb2cf34842f364603a066db05afbf3"
     private val versionPattern = Regex("\\d{4}\\.\\d{2}\\.\\d{2}(?:\\.\\d+)?")
+    private val assignmentPattern = Regex("(?m)^__version__\\s*=\\s*['\"]([^'\"]+)['\"]")
+    private const val MAX_PREAMBLE_BYTES = 4096
 
     fun validVersion(value: String): Boolean = versionPattern.matches(value)
 
@@ -28,11 +30,44 @@ object DownloaderCore {
     }
 
     fun version(file: File): String? = runCatching {
-        ZipFile(file).use { zip ->
-            val entry = zip.getEntry("yt_dlp/version.py") ?: return@use null
-            val text = zip.getInputStream(entry).bufferedReader().use { it.readText() }
-            Regex("(?m)^__version__\\s*=\\s*['\"]([^'\"]+)['\"]").find(text)
-                ?.groupValues?.get(1)?.takeIf(::validVersion)
+        file.inputStream().buffered().use { input ->
+            // The official Unix executable starts with '#!/usr/bin/env python3\n'.
+            // Recent Android ZipFile implementations require PK at byte zero.
+            // Keep the signed/checksummed file unchanged, and read its ZIP payload
+            // as a stream starting at the first local-file header instead.
+            input.mark(MAX_PREAMBLE_BYTES + 4)
+            var signature = 0
+            var zipOffset = -1
+            for (index in 0 until MAX_PREAMBLE_BYTES + 4) {
+                val byte = input.read()
+                if (byte < 0) break
+                signature = (signature shl 8) or byte
+                if (signature == 0x504b0304) {
+                    zipOffset = index - 3
+                    break
+                }
+            }
+            if (zipOffset < 0) return@runCatching null
+            input.reset()
+            var remaining = zipOffset.toLong()
+            while (remaining > 0) {
+                val skipped = input.skip(remaining)
+                if (skipped > 0) remaining -= skipped else {
+                    check(input.read() >= 0) { "Архив загрузчика обрезан" }
+                    remaining--
+                }
+            }
+            ZipInputStream(input).use { zip ->
+                while (true) {
+                    val entry = zip.nextEntry ?: break
+                    if (entry.name == "yt_dlp/version.py") {
+                        val text = zip.bufferedReader(Charsets.UTF_8).readText()
+                        return@runCatching assignmentPattern.find(text)?.groupValues?.get(1)?.takeIf(::validVersion)
+                    }
+                    zip.closeEntry()
+                }
+                null
+            }
         }
     }.getOrNull()
 

@@ -30,6 +30,31 @@ class DownloaderCoreTest {
 
     private fun installed(version: String): File = temporary.newFile("yt-dlp").apply { writeBytes(archive(version)) }
 
+    @Test fun unixExecutablePreambleIsReadWithoutChangingTheChecksummedFile() {
+        val target = temporary.newFile("unix-yt-dlp")
+        val bytes = "#!/usr/bin/env python3\n".toByteArray() + archive("2026.10.26")
+        target.writeBytes(bytes)
+        assertFalse(bytes.copyOfRange(0, 4).contentEquals(byteArrayOf(0x50, 0x4b, 3, 4)))
+        assertEquals("2026.10.26", DownloaderCore.version(target))
+        assertArrayEquals(bytes, target.readBytes())
+    }
+
+    @Test fun executableWithPreambleCanBeVerifiedAndInstalled() {
+        val target = installed("2025.11.12")
+        val executable = "#!/usr/bin/env python3\n".toByteArray() + archive("2026.10.26")
+        DownloaderCore.installVerified(target, "2026.10.26", sha256(executable)) { ByteArrayInputStream(executable) }
+        assertEquals("2026.10.26", DownloaderCore.version(target))
+        assertEquals(sha256(executable), DownloaderCore.sha256(target))
+    }
+
+    @Test fun malformedOrUnreasonablyLargePreambleIsRejected() {
+        val target = temporary.newFile("not-an-archive")
+        target.writeText("not a ZIP file")
+        assertNull(DownloaderCore.version(target))
+        target.writeBytes(ByteArray(5000) { 65 } + archive("2026.10.26"))
+        assertNull(DownloaderCore.version(target))
+    }
+
     @Test fun bundledOfficialArchiveUpgradesExisting2025InstallationAndIsNotInstalledAgain() {
         val target = installed("2025.11.12")
         val asset = listOf(File("src/main/assets/yt-dlp"), File("app/src/main/assets/yt-dlp")).first { it.isFile }
