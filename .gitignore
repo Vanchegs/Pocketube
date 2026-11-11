@@ -6,3 +6,22 @@ local.properties
 *.jks
 *.keystore
 .DS_Store
+
+.kotlin/
+
+# Local tooling, output and secrets
+*.apk
+*.aab
+*.apks
+*.log
+*.hprof
+.cxx/
+.externalNativeBuild/
+captures/
+outputs/
+deliverables/
+.env
+.env.*
+!.env.example
+key.properties
+keystore.properties

@@ -11,8 +11,8 @@ android {
         applicationId = "com.pocketube.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 5
-        versionName = "1.2.0"
+        versionCode = 6
+        versionName = "1.3.0"
         ndk {
             abiFilters += providers.gradleProperty("targetAbi").orNull?.let { listOf(it) }
                 ?: listOf("arm64-v8a", "armeabi-v7a", "x86_64")

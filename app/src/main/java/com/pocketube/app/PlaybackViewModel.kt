@@ -12,6 +12,7 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
+import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionToken
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -27,7 +28,8 @@ data class PlaybackState(
     val title: String = "", val author: String = "", val thumbnail: String = "",
     val isAudio: Boolean = false, val playing: Boolean = false, val buffering: Boolean = false,
     val positionMs: Long = 0, val durationMs: Long = 0,
-    val hasPrevious: Boolean = false, val hasNext: Boolean = false, val error: String? = null
+    val hasPrevious: Boolean = false, val hasNext: Boolean = false, val error: String? = null,
+    val volumePercent: Int = 100, val boostUnsupported: Boolean = false
 )
 
 class PlaybackViewModel(application: Application) : AndroidViewModel(application) {
@@ -39,7 +41,10 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
     val player: Player? get() = controller
     private var pending: Pair<DownloadItem, List<DownloadItem>>? = null
     private val future = MediaController.Builder(application,
-        SessionToken(application, ComponentName(application, PlaybackService::class.java))).buildAsync()
+        SessionToken(application, ComponentName(application, PlaybackService::class.java)))
+        .setListener(object : MediaController.Listener {
+            override fun onExtrasChanged(controller: MediaController, extras: Bundle) { synchronize() }
+        }).buildAsync()
     private val listener = object : Player.Listener {
         override fun onEvents(player: Player, events: Player.Events) { synchronize() }
         override fun onPlayerError(error: PlaybackException) {
@@ -78,7 +83,9 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
             positionMs = current.currentPosition.coerceAtLeast(0), durationMs = duration,
             hasPrevious = current.hasPreviousMediaItem() || current.currentPosition > 0,
             hasNext = current.hasNextMediaItem(),
-            error = current.playerError?.let { "Ошибка воспроизведения: ${it.errorCodeName}" }
+            error = current.playerError?.let { "Ошибка воспроизведения: ${it.errorCodeName}" },
+            volumePercent = current.sessionExtras.getInt(PlaybackVolume.LEVEL, 100),
+            boostUnsupported = current.sessionExtras.getBoolean(PlaybackVolume.UNSUPPORTED)
         )
     }
 
@@ -122,6 +129,13 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
             current.play()
         }
         synchronize()
+    }
+
+    fun setVolume(percent: Int) {
+        val current = controller ?: return
+        val value = PlaybackVolume.clamp(percent)
+        current.sendCustomCommand(SessionCommand(PlaybackVolume.ACTION, Bundle.EMPTY),
+            Bundle().apply { putInt(PlaybackVolume.LEVEL, value) })
     }
 
     fun seekTo(positionMs: Long) { controller?.seekTo(positionMs.coerceIn(0, mutableState.value.durationMs)); synchronize() }

@@ -12,6 +12,8 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.compose.animation.*
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.border
@@ -26,6 +28,7 @@ import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -83,6 +86,9 @@ private fun PocketubeScreen(model: MainViewModel, playback: PlaybackViewModel) {
     val busy by model.busy.collectAsStateWithLifecycle()
     val playlists by model.playlists.collectAsStateWithLifecycle()
     val playing by playback.state.collectAsStateWithLifecycle()
+    val tabState = rememberSaveableStateHolder()
+    var miniState by remember { mutableStateOf(playing) }
+    if (playing.currentId != null) miniState = playing
     var expanded by rememberSaveable { mutableStateOf(false) }
     var membershipItem by remember { mutableStateOf<DownloadItem?>(null) }
     var showPlaylistName by remember { mutableStateOf(false) }
@@ -106,7 +112,10 @@ private fun PocketubeScreen(model: MainViewModel, playback: PlaybackViewModel) {
     Scaffold(containerColor = Background, snackbarHost = { SnackbarHost(snack) },
         bottomBar = {
             Column {
-            if (playing.currentId != null) MiniPlayer(playing, playback, expanded) { expanded = true }
+            AnimatedVisibility(playing.currentId != null,
+                enter = expandVertically(tween(260)) + fadeIn(), exit = shrinkVertically(tween(220)) + fadeOut()) {
+                MiniPlayer(miniState, playback, expanded) { expanded = true }
+            }
             NavigationBar(containerColor = Background, tonalElevation = 0.dp) {
                 NavigationBarItem(selected = tab == 0, onClick = { tab = 0 },
                     icon = { Icon(Icons.Outlined.AddLink, null) }, label = { Text("Добавить") },
@@ -132,7 +141,12 @@ private fun PocketubeScreen(model: MainViewModel, playback: PlaybackViewModel) {
                     Icon(Icons.Outlined.SystemUpdateAlt, "Обновить загрузчик", tint = Muted)
                 }
             }
-            if (tab == 0) AddScreen(state, model, onDownload = {
+            AnimatedContent(targetState = tab, label = "bottom-navigation", transitionSpec = {
+                (fadeIn(tween(220, 40)) + slideInHorizontally(tween(260)) { if (targetState > initialState) it / 12 else -it / 12 })
+                    .togetherWith(fadeOut(tween(140)))
+            }) { selectedTab ->
+            tabState.SaveableStateProvider(selectedTab) {
+            if (selectedTab == 0) AddScreen(state, model, onDownload = {
                 if (Build.VERSION.SDK_INT >= 33) notifications.launch(Manifest.permission.POST_NOTIFICATIONS)
                 model.download { tab = 1 }
             })
@@ -147,6 +161,8 @@ private fun PocketubeScreen(model: MainViewModel, playback: PlaybackViewModel) {
                     val fileName = it.title.replace(Regex("[\\\\/:*?\"<>|]"), "_").take(100) + ".$extension"
                     if (it.mediaType == MediaType.AUDIO) exportAudio.launch(fileName) else exportVideo.launch(fileName)
                 })
+            }
+            }
         }
     }
     deleteItem?.let { item ->
@@ -166,7 +182,7 @@ private fun PocketubeScreen(model: MainViewModel, playback: PlaybackViewModel) {
         title = { Text("Удалить плейлист?") }, text = { Text("«${playlist.name}» будет удалён. Скачанные файлы останутся в медиатеке.") },
         confirmButton = { TextButton(onClick = { model.deletePlaylist(playlist.id); deletingPlaylist = null }) { Text("Удалить") } },
         dismissButton = { TextButton(onClick = { deletingPlaylist = null }) { Text("Отмена") } }) }
-    if (expanded && playing.currentId != null) FullPlayer(playing, playback) { expanded = false }
+    if (playing.currentId != null) FullPlayer(playing, playback, expanded) { expanded = false }
 }
 
 @Composable
@@ -211,7 +227,7 @@ private fun AddScreen(state: AddState, model: MainViewModel, onDownload: () -> U
         }
         state.error?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 13.sp) }
         state.preview?.let { video ->
-            Column(Modifier.clip(RoundedCornerShape(24.dp)).background(Surface), verticalArrangement = Arrangement.spacedBy(0.dp)) {
+            Column(Modifier.animateContentSize().clip(RoundedCornerShape(24.dp)).background(Surface), verticalArrangement = Arrangement.spacedBy(0.dp)) {
                 Thumbnail(video.thumbnail, video.duration, Modifier.fillMaxWidth().aspectRatio(16f / 9f))
                 Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(video.title, fontSize = 19.sp, fontWeight = FontWeight.SemiBold)
@@ -253,9 +269,9 @@ private fun AddScreen(state: AddState, model: MainViewModel, onDownload: () -> U
 @Composable
 internal fun DownloadCard(item: DownloadItem, busy: Boolean, onControl: (DownloadItem) -> Unit,
     onDelete: (DownloadItem) -> Unit, onPlay: (DownloadItem) -> Unit, onExport: (DownloadItem) -> Unit,
-    onAssign: (DownloadItem) -> Unit, playlistNames: List<String>) {
+    onAssign: (DownloadItem) -> Unit, playlistNames: List<String>, modifier: Modifier = Modifier) {
     val complete = item.status == DownloadStatus.COMPLETED
-    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(Surface).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    Column(modifier.fillMaxWidth().animateContentSize().clip(RoundedCornerShape(20.dp)).background(Surface).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Thumbnail(item.thumbnail, item.duration, Modifier.width(112.dp).height(72.dp).clip(RoundedCornerShape(12.dp)))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {

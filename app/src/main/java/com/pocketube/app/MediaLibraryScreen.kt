@@ -1,5 +1,7 @@
 package com.pocketube.app
 
+import android.content.res.Configuration
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
@@ -26,6 +28,7 @@ fun MediaLibraryScreen(downloads: List<DownloadItem>, playlists: List<Playlist>,
     onPlay: (DownloadItem, List<DownloadItem>) -> Unit, onExport: (DownloadItem) -> Unit,
     onAssign: (DownloadItem) -> Unit, onCreatePlaylist: () -> Unit,
     onRenamePlaylist: (Playlist) -> Unit, onDeletePlaylist: (Playlist) -> Unit) {
+    val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     var filter by rememberSaveable { mutableIntStateOf(0) }
     var selectedId by rememberSaveable { mutableStateOf<String?>(null) }
     var sortName by rememberSaveable { mutableStateOf(LibrarySort.NEWEST.name) }
@@ -38,8 +41,8 @@ fun MediaLibraryScreen(downloads: List<DownloadItem>, playlists: List<Playlist>,
     }
     Column(Modifier.fillMaxSize()) {
         Column(Modifier.padding(start = 22.dp, end = 22.dp, top = 12.dp, bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Ваша медиатека", fontSize = 29.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-.8).sp)
-            Text("${completed.size} сохранено · ${formatSize(completed.sumOf { it.size })} на устройстве", color = Muted, fontSize = 12.sp)
+            if (!landscape) Text("Ваша медиатека", fontSize = 29.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-.8).sp)
+            if (!landscape) Text("${completed.size} сохранено · ${formatSize(completed.sumOf { it.size })} на устройстве", color = Muted, fontSize = 12.sp)
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf("Все", "Загружаются", "Скачанные").forEachIndexed { index, title ->
                     FilterChip(selected = filter == index, onClick = { filter = index; if (index != 2) selectedId = null }, label = { Text(title, fontSize = 12.sp) })
@@ -90,7 +93,7 @@ fun MediaLibraryScreen(downloads: List<DownloadItem>, playlists: List<Playlist>,
             items(visible, key = { it.id }) { item ->
                 DownloadCard(item, item.id in busy, onControl, onDelete,
                     onPlay = { onPlay(it, visible.filter { entry -> entry.status == DownloadStatus.COMPLETED }) }, onExport = onExport,
-                    onAssign = onAssign, playlistNames = playlists.filter { item.id in it.itemIds }.map { it.name })
+                    onAssign = onAssign, playlistNames = playlists.filter { item.id in it.itemIds }.map { it.name }, modifier = Modifier.animateItem())
             }
         }
     }
