@@ -1,12 +1,10 @@
 package com.pocketube.app
 
 import android.Manifest
-import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -18,8 +16,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -36,25 +32,24 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import java.io.File
 
-private val Lime = Color(0xFFC5F277)
-private val Background = Color(0xFF101112)
-private val Surface = Color(0xFF1C1E20)
-private val Muted = Color(0xFF9DA29B)
+internal val Lime = Color(0xFFC5F277)
+internal val Background = Color(0xFF101112)
+internal val Surface = Color(0xFF1C1E20)
+internal val Muted = Color(0xFF9DA29B)
 
 class MainActivity : ComponentActivity() {
     private val model by viewModels<MainViewModel>()
+    private val playback by viewModels<PlaybackViewModel>()
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge(
@@ -66,7 +61,7 @@ class MainActivity : ComponentActivity() {
                 model.link(Regex("https?://[^\\s]+").find(shared)?.value ?: shared)
             }
         }
-        setContent { PocketubeTheme { PocketubeScreen(model) } }
+        setContent { PocketubeTheme { PocketubeScreen(model, playback) } }
     }
 }
 
@@ -81,13 +76,19 @@ private fun PocketubeTheme(content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun PocketubeScreen(model: MainViewModel) {
+private fun PocketubeScreen(model: MainViewModel, playback: PlaybackViewModel) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
     val state by model.state.collectAsStateWithLifecycle()
     val downloads by model.downloads.collectAsStateWithLifecycle()
     val busy by model.busy.collectAsStateWithLifecycle()
+    val playlists by model.playlists.collectAsStateWithLifecycle()
+    val playing by playback.state.collectAsStateWithLifecycle()
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    var membershipItem by remember { mutableStateOf<DownloadItem?>(null) }
+    var showPlaylistName by remember { mutableStateOf(false) }
+    var editingPlaylist by remember { mutableStateOf<Playlist?>(null) }
+    var deletingPlaylist by remember { mutableStateOf<Playlist?>(null) }
     val snack = remember { SnackbarHostState() }
-    val context = LocalContext.current
     val notifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     var exportItem by remember { mutableStateOf<DownloadItem?>(null) }
     var deleteItem by remember { mutableStateOf<DownloadItem?>(null) }
@@ -99,9 +100,13 @@ private fun PocketubeScreen(model: MainViewModel) {
     val exportVideo = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("video/*"), finishExport)
     val exportAudio = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("audio/mpeg"), finishExport)
     LaunchedEffect(model) { model.messages.collect { snack.showSnackbar(it) } }
+    LaunchedEffect(playback) { playback.messages.collect { snack.showSnackbar(it) } }
+    LaunchedEffect(playing.currentId) { if (playing.currentId == null) expanded = false }
 
     Scaffold(containerColor = Background, snackbarHost = { SnackbarHost(snack) },
         bottomBar = {
+            Column {
+            if (playing.currentId != null) MiniPlayer(playing, playback, expanded) { expanded = true }
             NavigationBar(containerColor = Background, tonalElevation = 0.dp) {
                 NavigationBarItem(selected = tab == 0, onClick = { tab = 0 },
                     icon = { Icon(Icons.Outlined.AddLink, null) }, label = { Text("Добавить") },
@@ -112,6 +117,7 @@ private fun PocketubeScreen(model: MainViewModel) {
                         if (active > 0) Badge(containerColor = Lime, contentColor = Background) { Text("$active") }
                     }) { Icon(Icons.Outlined.Download, null) } }, label = { Text("Загрузки") },
                     colors = NavigationBarItemDefaults.colors(indicatorColor = Lime.copy(alpha = .14f), selectedIconColor = Lime, selectedTextColor = Lime))
+            }
             }
         }
     ) { padding ->
@@ -130,19 +136,12 @@ private fun PocketubeScreen(model: MainViewModel) {
                 if (Build.VERSION.SDK_INT >= 33) notifications.launch(Manifest.permission.POST_NOTIFICATIONS)
                 model.download { tab = 1 }
             })
-            else LibraryScreen(downloads, busy, onAdd = { tab = 0 }, onControl = { model.control(it) },
-                onDelete = { deleteItem = it }, onPlay = { item ->
-                    try {
-                        val file = File(item.filePath)
-                        check(file.isFile) { "Файл удалён с устройства" }
-                        val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", file)
-                        context.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, item.mediaType.mimeType)
-                            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
-                    } catch (e: Exception) {
-                        val message = if (e is ActivityNotFoundException) "Установите медиаплеер, например VLC" else e.message
-                        Toast.makeText(context, message, Toast.LENGTH_LONG).show()
-                    }
-                }, onExport = {
+            else MediaLibraryScreen(downloads, playlists, busy, onAdd = { tab = 0 }, onControl = { model.control(it) },
+                onDelete = { deleteItem = it }, onPlay = { item, queue -> expanded = false; playback.play(item, queue) },
+                onAssign = { membershipItem = it },
+                onCreatePlaylist = { editingPlaylist = null; showPlaylistName = true },
+                onRenamePlaylist = { editingPlaylist = it; showPlaylistName = true },
+                onDeletePlaylist = { deletingPlaylist = it }, onExport = {
                     exportItem = it
                     val extension = File(it.filePath).extension.ifBlank { if (it.mediaType == MediaType.AUDIO) "mp3" else "mp4" }
                     val fileName = it.title.replace(Regex("[\\\\/:*?\"<>|]"), "_").take(100) + ".$extension"
@@ -153,9 +152,21 @@ private fun PocketubeScreen(model: MainViewModel) {
     deleteItem?.let { item ->
         AlertDialog(onDismissRequest = { deleteItem = null }, title = { Text(if (item.mediaType == MediaType.AUDIO) "Удалить аудио?" else "Удалить видео?") },
             text = { Text("«${item.title}» и все его загруженные файлы будут удалены с телефона.") },
-            confirmButton = { TextButton(onClick = { model.control(item, delete = true); deleteItem = null }) { Text("Удалить", color = MaterialTheme.colorScheme.error) } },
+            confirmButton = { TextButton(onClick = { playback.remove(item.id); model.control(item, delete = true); deleteItem = null }) { Text("Удалить", color = MaterialTheme.colorScheme.error) } },
             dismissButton = { TextButton(onClick = { deleteItem = null }) { Text("Отмена") } })
     }
+    membershipItem?.let { item -> PlaylistMembershipDialog(item, playlists,
+        onDismiss = { membershipItem = null }, onCreate = model::createPlaylist,
+        onSave = { model.assignPlaylists(item.id, it) }) }
+    if (showPlaylistName) PlaylistNameDialog(editingPlaylist, onDismiss = { showPlaylistName = false }, onSave = {
+        val current = editingPlaylist
+        if (current == null) model.createPlaylist(it) else model.renamePlaylist(current.id, it)
+    })
+    deletingPlaylist?.let { playlist -> AlertDialog(onDismissRequest = { deletingPlaylist = null },
+        title = { Text("Удалить плейлист?") }, text = { Text("«${playlist.name}» будет удалён. Скачанные файлы останутся в медиатеке.") },
+        confirmButton = { TextButton(onClick = { model.deletePlaylist(playlist.id); deletingPlaylist = null }) { Text("Удалить") } },
+        dismissButton = { TextButton(onClick = { deletingPlaylist = null }) { Text("Отмена") } }) }
+    if (expanded && playing.currentId != null) FullPlayer(playing, playback) { expanded = false }
 }
 
 @Composable
@@ -240,45 +251,9 @@ private fun AddScreen(state: AddState, model: MainViewModel, onDownload: () -> U
 }
 
 @Composable
-private fun LibraryScreen(downloads: List<DownloadItem>, busy: Set<String>, onAdd: () -> Unit,
-    onControl: (DownloadItem) -> Unit, onDelete: (DownloadItem) -> Unit,
-    onPlay: (DownloadItem) -> Unit, onExport: (DownloadItem) -> Unit) {
-    var filter by rememberSaveable { mutableIntStateOf(0) }
-    val completed = downloads.filter { it.status == DownloadStatus.COMPLETED }
-    Column(Modifier.fillMaxSize()) {
-        Column(Modifier.padding(horizontal = 24.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Ваша медиатека", fontSize = 29.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-.8).sp)
-            Text("${completed.size} сохранено · ${formatSize(completed.sumOf { it.size })} на устройстве", color = Muted, fontSize = 13.sp)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("Все", "Загружаются", "Скачанные").forEachIndexed { index, text ->
-                    FilterChip(selected = filter == index, onClick = { filter = index }, label = { Text(text, fontSize = 12.sp) })
-                }
-            }
-        }
-        val visible = downloads.filter { filter == 0 || if (filter == 2) it.status == DownloadStatus.COMPLETED else it.status != DownloadStatus.COMPLETED }
-        if (visible.isEmpty()) {
-            Column(Modifier.fillMaxSize().padding(32.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-                Box(Modifier.size(92.dp).clip(RoundedCornerShape(28.dp)).background(Surface), contentAlignment = Alignment.Center) {
-                    Icon(Icons.Outlined.VideoLibrary, null, Modifier.size(42.dp), tint = Lime)
-                }
-                Spacer(Modifier.height(24.dp))
-                Text(if (downloads.isEmpty()) "Здесь будут ваши загрузки" else "Пока ничего нет", fontSize = 21.sp, fontWeight = FontWeight.Medium)
-                Spacer(Modifier.height(10.dp))
-                Text("Добавьте ссылку и сохраните видео или звук\nдля просмотра и прослушивания офлайн.", color = Muted, fontSize = 13.sp, lineHeight = 21.sp)
-                Spacer(Modifier.height(24.dp))
-                Button(onClick = onAdd, shape = RoundedCornerShape(14.dp)) { Text("Добавить ссылку") }
-            }
-        } else LazyColumn(contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            items(visible, key = { it.id }) { item ->
-                DownloadCard(item, item.id in busy, onControl, onDelete, onPlay, onExport)
-            }
-        }
-    }
-}
-
-@Composable
-private fun DownloadCard(item: DownloadItem, busy: Boolean, onControl: (DownloadItem) -> Unit,
-    onDelete: (DownloadItem) -> Unit, onPlay: (DownloadItem) -> Unit, onExport: (DownloadItem) -> Unit) {
+internal fun DownloadCard(item: DownloadItem, busy: Boolean, onControl: (DownloadItem) -> Unit,
+    onDelete: (DownloadItem) -> Unit, onPlay: (DownloadItem) -> Unit, onExport: (DownloadItem) -> Unit,
+    onAssign: (DownloadItem) -> Unit, playlistNames: List<String>) {
     val complete = item.status == DownloadStatus.COMPLETED
     Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(Surface).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -290,6 +265,8 @@ private fun DownloadCard(item: DownloadItem, busy: Boolean, onControl: (Download
                 Text("$format${if (complete) " · ${formatSize(item.size)}" else ""}", fontSize = 11.sp, color = Lime)
             }
         }
+        if (playlistNames.isNotEmpty()) Text(playlistNames.joinToString(" · "), fontSize = 11.sp, color = Muted,
+            maxLines = 1, overflow = TextOverflow.Ellipsis)
         if (!complete) {
             LinearProgressIndicator(progress = { item.progress / 100f }, modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(4.dp)), trackColor = Color(0xFF343834))
             val label = when (item.status) {
@@ -308,6 +285,7 @@ private fun DownloadCard(item: DownloadItem, busy: Boolean, onControl: (Download
                     Icon(Icons.Outlined.PlayArrow, null, Modifier.size(18.dp))
                     Text(if (item.mediaType == MediaType.AUDIO) "Слушать" else "Смотреть", fontSize = 12.sp)
                 }
+                IconButton(onClick = { onAssign(item) }, enabled = !busy) { Icon(Icons.Outlined.PlaylistAdd, "Добавить в плейлист", Modifier.size(21.dp)) }
                 IconButton(onClick = { onExport(item) }, enabled = !busy) { Icon(Icons.Outlined.SaveAlt, "Сохранить в папку", Modifier.size(21.dp)) }
             } else {
                 val active = item.status in listOf(DownloadStatus.QUEUED, DownloadStatus.DOWNLOADING)

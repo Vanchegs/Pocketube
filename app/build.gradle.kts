@@ -11,8 +11,8 @@ android {
         applicationId = "com.pocketube.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 4
-        versionName = "1.1.2"
+        versionCode = 5
+        versionName = "1.2.0"
         ndk {
             abiFilters += providers.gradleProperty("targetAbi").orNull?.let { listOf(it) }
                 ?: listOf("arm64-v8a", "armeabi-v7a", "x86_64")
@@ -40,6 +40,9 @@ dependencies {
     implementation("androidx.work:work-runtime-ktx:2.10.1")
     implementation("androidx.core:core-ktx:1.16.0")
     implementation("io.coil-kt:coil-compose:2.7.0")
+    implementation("androidx.media3:media3-exoplayer:1.6.1")
+    implementation("androidx.media3:media3-session:1.6.1")
+    implementation("androidx.media3:media3-ui:1.6.1")
     implementation("io.github.junkfood02.youtubedl-android:library:0.18.1")
     implementation("io.github.junkfood02.youtubedl-android:ffmpeg:0.18.1")
     testImplementation("junit:junit:4.13.2")

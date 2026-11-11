@@ -14,6 +14,7 @@ import java.util.concurrent.locks.ReentrantReadWriteLock
 
 class PocketubeApp : Application() {
     val downloads by lazy { DownloadRepository(this) }
+    val playlists by lazy { PlaylistRepository(filesDir) }
     val engine = VideoEngine()
 
     override fun onCreate() {

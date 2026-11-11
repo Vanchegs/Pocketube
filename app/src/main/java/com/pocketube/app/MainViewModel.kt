@@ -28,6 +28,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val mutableState = MutableStateFlow(AddState())
     val state = mutableState.asStateFlow()
     val downloads = app.downloads.items
+    val playlists = app.playlists.playlists
     private val mutableMessages = MutableSharedFlow<String>(extraBufferCapacity = 5)
     val messages = mutableMessages.asSharedFlow()
     private val mutableBusy = MutableStateFlow<Set<String>>(emptySet())
@@ -86,11 +87,37 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         mutableBusy.value += item.id
         viewModelScope.launch {
             try {
-                if (delete) app.downloads.delete(item.id)
+                if (delete) {
+                    app.downloads.delete(item.id)
+                    withContext(Dispatchers.IO) { app.playlists.removeItem(item.id) }
+                }
                 else if (item.status in listOf(DownloadStatus.QUEUED, DownloadStatus.DOWNLOADING)) app.downloads.pause(item.id)
                 else withContext(Dispatchers.IO) { app.downloads.resume(item.id) }
             } catch (e: Exception) { mutableMessages.emit("Не удалось выполнить действие: ${e.message}") }
             finally { mutableBusy.value -= item.id }
+        }
+    }
+
+    fun createPlaylist(name: String, onCreated: (String) -> Unit = {}) {
+        viewModelScope.launch {
+            try {
+                val id = withContext(Dispatchers.IO) { app.playlists.create(name) }
+                onCreated(id)
+            } catch (error: Exception) { mutableMessages.emit(error.message ?: "Не удалось создать плейлист") }
+        }
+    }
+
+    fun renamePlaylist(id: String, name: String) = playlistChange { app.playlists.rename(id, name) }
+    fun deletePlaylist(id: String) = playlistChange { app.playlists.delete(id) }
+    fun assignPlaylists(itemId: String, playlistIds: Set<String>) = playlistChange {
+        require(app.downloads.get(itemId)?.status == DownloadStatus.COMPLETED) { "Файл ещё не скачан" }
+        app.playlists.setMembership(itemId, playlistIds)
+    }
+
+    private fun playlistChange(operation: () -> Unit) {
+        viewModelScope.launch {
+            try { withContext(Dispatchers.IO) { operation() } }
+            catch (error: Exception) { mutableMessages.emit(error.message ?: "Не удалось изменить плейлист") }
         }
     }
 

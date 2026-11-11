@@ -5,6 +5,7 @@
 - [FFmpeg](https://ffmpeg.org/legal.html): LGPL/GPL в зависимости от конфигурации нативной сборки youtubedl-android. Сборочные инструкции: https://github.com/yausername/youtubedl-android/blob/master/BUILD_FFMPEG.md.
 - Python: PSF License; QuickJS: MIT. Поставляются через youtubedl-android.
 - AndroidX / Jetpack Compose / WorkManager: Apache-2.0.
+- [AndroidX Media3](https://github.com/androidx/media), версия 1.6.1 (ExoPlayer, Session, UI): Apache-2.0.
 - Coil: Apache-2.0.
 - Jackson: Apache-2.0; Apache Commons IO: Apache-2.0.
 
