@@ -9,8 +9,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
-import org.json.JSONArray
-import org.json.JSONObject
 import java.io.File
 import java.util.UUID
 
@@ -26,19 +24,10 @@ class DownloadRepository(private val context: Context) {
 
     @Synchronized
     private fun save(values: List<DownloadItem>) {
-        val json = JSONArray()
-        values.forEach { item ->
-            json.put(JSONObject().apply {
-                put("id", item.id); put("runId", item.runId); put("url", item.url)
-                put("title", item.title); put("author", item.author); put("thumbnail", item.thumbnail)
-                put("duration", item.duration); put("quality", item.quality); put("status", item.status.name)
-                put("progress", item.progress.toDouble()); put("eta", item.eta); put("filePath", item.filePath)
-                put("size", item.size); put("error", item.error)
-            })
-        }
+        val json = DownloadJson.encode(values)
         val stream = stateFile.startWrite()
         try {
-            stream.write(json.toString().toByteArray(Charsets.UTF_8))
+            stream.write(json.toByteArray(Charsets.UTF_8))
             stateFile.finishWrite(stream)
         } catch (e: Exception) {
             stateFile.failWrite(stream)
@@ -50,15 +39,7 @@ class DownloadRepository(private val context: Context) {
     private fun read(): List<DownloadItem> {
         if (!stateFile.baseFile.exists()) return emptyList()
         // Do not replace an unreadable history with an empty file.
-        val json = JSONArray(stateFile.openRead().use { it.readBytes().toString(Charsets.UTF_8) })
-        return (0 until json.length()).map { index ->
-            val o = json.getJSONObject(index)
-            DownloadItem(o.getString("id"), o.getString("runId"), o.getString("url"),
-                o.getString("title"), o.getString("author"), o.getString("thumbnail"),
-                o.getInt("duration"), o.getInt("quality"), DownloadStatus.valueOf(o.getString("status")),
-                o.optDouble("progress", 0.0).toFloat(), o.optLong("eta"), o.optString("filePath"),
-                o.optLong("size"), o.optString("error"))
-        }
+        return DownloadJson.decode(stateFile.openRead().use { it.readBytes().toString(Charsets.UTF_8) })
     }
 
     @Synchronized
@@ -72,10 +53,11 @@ class DownloadRepository(private val context: Context) {
     }
 
     @Synchronized
-    fun add(video: VideoPreview, quality: Int): Boolean {
-        if (mutableItems.value.any { it.url == video.url && it.quality == quality }) return false
+    fun add(video: VideoPreview, quality: Int, mediaType: MediaType = MediaType.VIDEO): Boolean {
+        if (mutableItems.value.any { it.matchesSelection(video.url, quality, mediaType) }) return false
         val item = DownloadItem(UUID.randomUUID().toString(), UUID.randomUUID().toString(), video.url,
-            video.title, video.author, video.thumbnail, video.duration, quality)
+            video.title, video.author, video.thumbnail, video.duration,
+            if (mediaType == MediaType.AUDIO) 0 else quality, mediaType = mediaType)
         save(listOf(item) + mutableItems.value)
         enqueue(item)
         return true

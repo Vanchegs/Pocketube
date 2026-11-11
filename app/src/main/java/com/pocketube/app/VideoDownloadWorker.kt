@@ -9,7 +9,6 @@ import androidx.work.CoroutineWorker
 import androidx.work.ForegroundInfo
 import androidx.work.WorkerParameters
 import com.yausername.youtubedl_android.YoutubeDL
-import com.yausername.youtubedl_android.YoutubeDLRequest
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runInterruptible
@@ -34,7 +33,7 @@ class VideoDownloadWorker(context: Context, params: WorkerParameters) : Coroutin
         val value = NotificationCompat.Builder(applicationContext, "downloads")
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setContentTitle(item?.title ?: "Pocketube")
-            .setContentText("Загрузка видео · ${item?.progress?.toInt() ?: 0}%")
+            .setContentText("Загрузка ${if (item?.mediaType == MediaType.AUDIO) "аудио" else "видео"} · ${item?.progress?.toInt() ?: 0}%")
             .setContentIntent(open).setOngoing(true).setOnlyAlertOnce(true)
             .setProgress(100, item?.progress?.toInt() ?: 0, item?.progress == 0f)
             .addAction(android.R.drawable.ic_media_pause, "Остановить", cancel)
@@ -54,18 +53,7 @@ class VideoDownloadWorker(context: Context, params: WorkerParameters) : Coroutin
                     return@withPermit
                 repository.change(itemId, runId) { it.copy(status = DownloadStatus.DOWNLOADING, error = "") }
                 val directory = repository.directory(itemId)
-                val request = YoutubeDLRequest(item.url).apply {
-                    addOption("--no-playlist")
-                    addOption("--continue")
-                    addOption("--newline")
-                    addOption("--socket-timeout", 25)
-                    addOption("--retries", 3)
-                    addOption("--fragment-retries", 3)
-                    addOption("--cache-dir", File(applicationContext.cacheDir, "yt-dlp").absolutePath)
-                    addOption("-f", "bv*[height<=${item.quality}][ext=mp4]+ba[ext=m4a]/b[height<=${item.quality}][ext=mp4]/bv*[height<=${item.quality}]+ba/b[height<=${item.quality}]")
-                    addOption("--merge-output-format", "mp4/mkv")
-                    addOption("-o", File(directory, "video.%(ext)s").absolutePath)
-                }
+                val request = DownloadRequestFactory.create(item, directory, File(applicationContext.cacheDir, "yt-dlp"))
                 var lastUpdate = 0L
                 runInterruptible {
                     YoutubeDL.getInstance().execute(request, runId) { progress, eta, _ ->
@@ -79,9 +67,8 @@ class VideoDownloadWorker(context: Context, params: WorkerParameters) : Coroutin
                         }
                     }
                 }
-                val file = directory.listFiles()?.firstOrNull {
-                    it.name in listOf("video.mp4", "video.mkv", "video.webm", "video.mov") && it.length() > 0
-                } ?: error("Загрузка завершилась без видеофайла")
+                val file = DownloadRequestFactory.completedFile(item, directory)
+                    ?: error("Загрузка завершилась без ${if (item.mediaType == MediaType.AUDIO) "MP3-файла" else "видеофайла"}")
                 repository.change(itemId, runId) {
                     if (it.status == DownloadStatus.DOWNLOADING)
                         it.copy(status = DownloadStatus.COMPLETED, progress = 100f, eta = 0,
@@ -99,7 +86,7 @@ class VideoDownloadWorker(context: Context, params: WorkerParameters) : Coroutin
         } catch (e: Exception) {
             repository.change(itemId, runId) {
                 if (it.status == DownloadStatus.PAUSED) it else it.copy(status = DownloadStatus.ERROR,
-                    error = e.message?.takeLast(800) ?: "Не удалось скачать видео")
+                    error = e.message?.takeLast(800) ?: "Не удалось скачать файл")
             }
             Result.failure()
         } finally {

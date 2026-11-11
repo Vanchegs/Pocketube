@@ -20,7 +20,8 @@ import java.io.File
 data class AddState(
     val link: String = "", val loading: Boolean = false,
     val preview: VideoPreview? = null, val quality: Int = 720,
-    val error: String? = null, val updating: Boolean = false
+    val error: String? = null, val updating: Boolean = false,
+    val mediaType: MediaType = MediaType.VIDEO
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -37,6 +38,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (!mutableState.value.loading) mutableState.value = mutableState.value.copy(link = value, preview = null, error = null)
     }
     fun quality(value: Int) { mutableState.value = mutableState.value.copy(quality = value) }
+    fun mediaType(value: MediaType) { mutableState.value = mutableState.value.copy(mediaType = value) }
 
     fun inspect() {
         if (mutableState.value.loading || mutableState.value.updating) return
@@ -73,8 +75,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val preview = current.preview ?: return
         viewModelScope.launch {
             try {
-                val added = withContext(Dispatchers.IO) { app.downloads.add(preview, current.quality) }
-                mutableMessages.emit(if (added) "Видео добавлено в загрузки" else "Это видео уже есть в загрузках")
+                val added = withContext(Dispatchers.IO) { app.downloads.add(preview, current.quality, current.mediaType) }
+                val name = if (current.mediaType == MediaType.AUDIO) "Аудио" else "Видео"
+                mutableMessages.emit(if (added) "$name добавлено в загрузки" else "$name уже есть в загрузках")
                 onAdded()
             } catch (e: Exception) { mutableMessages.emit("Не удалось добавить: ${e.message}") }
         }
@@ -103,7 +106,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         ?: error("Не удалось открыть выбранную папку")
                     output.use { target -> file.inputStream().use { it.copyTo(target) } }
                 }
-                mutableMessages.emit("Видео сохранено в выбранную папку")
+                mutableMessages.emit("Файл сохранён в выбранную папку")
             } catch (e: Exception) { mutableMessages.emit("Не удалось сохранить: ${e.message}") }
         }
     }

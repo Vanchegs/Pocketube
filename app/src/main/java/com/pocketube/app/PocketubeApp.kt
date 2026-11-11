@@ -17,7 +17,7 @@ class PocketubeApp : Application() {
     override fun onCreate() {
         super.onCreate()
         getSystemService(NotificationManager::class.java).createNotificationChannel(
-            NotificationChannel("downloads", "Загрузка видео", NotificationManager.IMPORTANCE_LOW)
+            NotificationChannel("downloads", "Загрузки видео и аудио", NotificationManager.IMPORTANCE_LOW)
         )
     }
 }

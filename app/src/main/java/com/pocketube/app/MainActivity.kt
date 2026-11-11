@@ -3,6 +3,7 @@ package com.pocketube.app
 import android.Manifest
 import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
@@ -90,11 +91,13 @@ private fun PocketubeScreen(model: MainViewModel) {
     val notifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     var exportItem by remember { mutableStateOf<DownloadItem?>(null) }
     var deleteItem by remember { mutableStateOf<DownloadItem?>(null) }
-    val export = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("video/*")) { uri ->
+    val finishExport: (Uri?) -> Unit = { uri ->
         val item = exportItem
         if (uri != null && item != null) model.export(item, uri)
         exportItem = null
     }
+    val exportVideo = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("video/*"), finishExport)
+    val exportAudio = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("audio/mpeg"), finishExport)
     LaunchedEffect(model) { model.messages.collect { snack.showSnackbar(it) } }
 
     Scaffold(containerColor = Background, snackbarHost = { SnackbarHost(snack) },
@@ -133,21 +136,22 @@ private fun PocketubeScreen(model: MainViewModel) {
                         val file = File(item.filePath)
                         check(file.isFile) { "Файл удалён с устройства" }
                         val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", file)
-                        context.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, "video/*")
+                        context.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, item.mediaType.mimeType)
                             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
                     } catch (e: Exception) {
-                        val message = if (e is ActivityNotFoundException) "Установите видеоплеер, например VLC" else e.message
+                        val message = if (e is ActivityNotFoundException) "Установите медиаплеер, например VLC" else e.message
                         Toast.makeText(context, message, Toast.LENGTH_LONG).show()
                     }
                 }, onExport = {
                     exportItem = it
-                    val extension = File(it.filePath).extension.ifBlank { "mp4" }
-                    export.launch(it.title.replace(Regex("[\\\\/:*?\"<>|]"), "_").take(100) + ".$extension")
+                    val extension = File(it.filePath).extension.ifBlank { if (it.mediaType == MediaType.AUDIO) "mp3" else "mp4" }
+                    val fileName = it.title.replace(Regex("[\\\\/:*?\"<>|]"), "_").take(100) + ".$extension"
+                    if (it.mediaType == MediaType.AUDIO) exportAudio.launch(fileName) else exportVideo.launch(fileName)
                 })
         }
     }
     deleteItem?.let { item ->
-        AlertDialog(onDismissRequest = { deleteItem = null }, title = { Text("Удалить видео?") },
+        AlertDialog(onDismissRequest = { deleteItem = null }, title = { Text(if (item.mediaType == MediaType.AUDIO) "Удалить аудио?" else "Удалить видео?") },
             text = { Text("«${item.title}» и все его загруженные файлы будут удалены с телефона.") },
             confirmButton = { TextButton(onClick = { model.control(item, delete = true); deleteItem = null }) { Text("Удалить", color = MaterialTheme.colorScheme.error) } },
             dismissButton = { TextButton(onClick = { deleteItem = null }) { Text("Отмена") } })
@@ -162,8 +166,8 @@ private fun AddScreen(state: AddState, model: MainViewModel, onDownload: () -> U
             Icon(Icons.Outlined.OfflineBolt, null, Modifier.size(16.dp), tint = Lime)
             Text("СОХРАНИТЕ НА ПОТОМ", color = Lime, fontSize = 11.sp, letterSpacing = 2.sp)
         }
-        Text("Любимые видео.\nВсегда с вами.", fontSize = 36.sp, lineHeight = 40.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-1.3).sp)
-        Text("Ссылка с YouTube — и видео в вашем\nкармане. Смотрите даже без интернета.", color = Muted, fontSize = 15.sp, lineHeight = 23.sp)
+        Text("Видео и музыка.\nВсегда с вами.", fontSize = 36.sp, lineHeight = 40.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-1.3).sp)
+        Text("Сохраните видео целиком или только звук.\nСлушайте и смотрите без интернета.", color = Muted, fontSize = 15.sp, lineHeight = 23.sp)
         Column(Modifier.clip(RoundedCornerShape(24.dp)).background(Surface).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Text("Ссылка на видео", fontWeight = FontWeight.Medium, fontSize = 14.sp)
             OutlinedTextField(value = state.link, onValueChange = model::link, modifier = Modifier.fillMaxWidth(),
@@ -175,6 +179,14 @@ private fun AddScreen(state: AddState, model: MainViewModel, onDownload: () -> U
                 } },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Go),
                 keyboardActions = KeyboardActions(onGo = { model.inspect() }))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(selected = state.mediaType == MediaType.VIDEO,
+                    onClick = { model.mediaType(MediaType.VIDEO) },
+                    label = { Text("Видео") }, leadingIcon = { Icon(Icons.Outlined.Videocam, null, Modifier.size(18.dp)) })
+                FilterChip(selected = state.mediaType == MediaType.AUDIO,
+                    onClick = { model.mediaType(MediaType.AUDIO) },
+                    label = { Text("Только аудио") }, leadingIcon = { Icon(Icons.Outlined.Headphones, null, Modifier.size(18.dp)) })
+            }
             Button(onClick = model::inspect, enabled = state.link.isNotBlank() && !state.loading && !state.updating,
                 modifier = Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(14.dp)) {
                 if (state.loading) {
@@ -193,14 +205,19 @@ private fun AddScreen(state: AddState, model: MainViewModel, onDownload: () -> U
                 Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(video.title, fontSize = 19.sp, fontWeight = FontWeight.SemiBold)
                     Text(video.author, color = Muted, fontSize = 13.sp)
-                    Text("Качество видео", fontSize = 13.sp, fontWeight = FontWeight.Medium)
-                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        video.qualities.forEach { quality ->
-                            FilterChip(selected = state.quality == quality, onClick = { model.quality(quality) }, label = { Text("${quality}p") })
+                    if (state.mediaType == MediaType.VIDEO) {
+                        Text("Качество видео", fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            video.qualities.forEach { quality ->
+                                FilterChip(selected = state.quality == quality, onClick = { model.quality(quality) }, label = { Text("${quality}p") })
+                            }
                         }
+                    } else {
+                        Text("MP3 · лучшее доступное качество звука", fontSize = 13.sp, color = Lime)
                     }
                     Button(onClick = onDownload, enabled = !state.updating, modifier = Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(14.dp)) {
-                        Icon(Icons.Outlined.Download, null, Modifier.size(20.dp)); Spacer(Modifier.width(8.dp)); Text("Скачать видео")
+                        Icon(Icons.Outlined.Download, null, Modifier.size(20.dp)); Spacer(Modifier.width(8.dp))
+                        Text(if (state.mediaType == MediaType.AUDIO) "Скачать аудио" else "Скачать видео")
                     }
                 }
             }
@@ -216,7 +233,7 @@ private fun AddScreen(state: AddState, model: MainViewModel, onDownload: () -> U
         }
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Outlined.Smartphone, null, Modifier.size(14.dp), tint = Muted)
-            Text("Видео хранятся только на вашем устройстве", fontSize = 11.sp, color = Muted)
+            Text("Файлы хранятся только на вашем устройстве", fontSize = 11.sp, color = Muted)
         }
         Spacer(Modifier.height(8.dp))
     }
@@ -230,7 +247,7 @@ private fun LibraryScreen(downloads: List<DownloadItem>, busy: Set<String>, onAd
     val completed = downloads.filter { it.status == DownloadStatus.COMPLETED }
     Column(Modifier.fillMaxSize()) {
         Column(Modifier.padding(horizontal = 24.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Ваша видеотека", fontSize = 29.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-.8).sp)
+            Text("Ваша медиатека", fontSize = 29.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-.8).sp)
             Text("${completed.size} сохранено · ${formatSize(completed.sumOf { it.size })} на устройстве", color = Muted, fontSize = 13.sp)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf("Все", "Загружаются", "Скачанные").forEachIndexed { index, text ->
@@ -245,11 +262,11 @@ private fun LibraryScreen(downloads: List<DownloadItem>, busy: Set<String>, onAd
                     Icon(Icons.Outlined.VideoLibrary, null, Modifier.size(42.dp), tint = Lime)
                 }
                 Spacer(Modifier.height(24.dp))
-                Text(if (downloads.isEmpty()) "Здесь будут ваши видео" else "Пока ничего нет", fontSize = 21.sp, fontWeight = FontWeight.Medium)
+                Text(if (downloads.isEmpty()) "Здесь будут ваши загрузки" else "Пока ничего нет", fontSize = 21.sp, fontWeight = FontWeight.Medium)
                 Spacer(Modifier.height(10.dp))
-                Text("Добавьте ссылку и сохраните первое видео\nдля просмотра без интернета.", color = Muted, fontSize = 13.sp, lineHeight = 21.sp)
+                Text("Добавьте ссылку и сохраните видео или звук\nдля просмотра и прослушивания офлайн.", color = Muted, fontSize = 13.sp, lineHeight = 21.sp)
                 Spacer(Modifier.height(24.dp))
-                Button(onClick = onAdd, shape = RoundedCornerShape(14.dp)) { Text("Добавить видео") }
+                Button(onClick = onAdd, shape = RoundedCornerShape(14.dp)) { Text("Добавить ссылку") }
             }
         } else LazyColumn(contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             items(visible, key = { it.id }) { item ->
@@ -269,7 +286,8 @@ private fun DownloadCard(item: DownloadItem, busy: Boolean, onControl: (Download
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(item.title, maxLines = 2, overflow = TextOverflow.Ellipsis, fontSize = 14.sp, lineHeight = 19.sp, fontWeight = FontWeight.Medium)
                 Text(item.author, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 11.sp, color = Muted)
-                Text("${item.quality}p${if (complete) " · ${formatSize(item.size)}" else ""}", fontSize = 11.sp, color = Lime)
+                val format = if (item.mediaType == MediaType.AUDIO) "Аудио · MP3" else "Видео · ${item.quality}p"
+                Text("$format${if (complete) " · ${formatSize(item.size)}" else ""}", fontSize = 11.sp, color = Lime)
             }
         }
         if (!complete) {
@@ -287,7 +305,8 @@ private fun DownloadCard(item: DownloadItem, busy: Boolean, onControl: (Download
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             if (complete) {
                 FilledTonalButton(onClick = { onPlay(item) }, enabled = !busy, contentPadding = PaddingValues(horizontal = 12.dp), shape = RoundedCornerShape(12.dp)) {
-                    Icon(Icons.Outlined.PlayArrow, null, Modifier.size(18.dp)); Text("Смотреть", fontSize = 12.sp)
+                    Icon(Icons.Outlined.PlayArrow, null, Modifier.size(18.dp))
+                    Text(if (item.mediaType == MediaType.AUDIO) "Слушать" else "Смотреть", fontSize = 12.sp)
                 }
                 IconButton(onClick = { onExport(item) }, enabled = !busy) { Icon(Icons.Outlined.SaveAlt, "Сохранить в папку", Modifier.size(21.dp)) }
             } else {
@@ -299,7 +318,7 @@ private fun DownloadCard(item: DownloadItem, busy: Boolean, onControl: (Download
                 }
             }
             Spacer(Modifier.weight(1f))
-            IconButton(onClick = { onDelete(item) }, enabled = !busy) { Icon(Icons.Outlined.DeleteOutline, "Удалить видео", tint = Muted, modifier = Modifier.size(21.dp)) }
+            IconButton(onClick = { onDelete(item) }, enabled = !busy) { Icon(Icons.Outlined.DeleteOutline, "Удалить файл", tint = Muted, modifier = Modifier.size(21.dp)) }
         }
     }
 }
