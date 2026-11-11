@@ -37,6 +37,14 @@ cd pocketube-android
 
 APK: `app/build/outputs/apk/debug/app-debug.apk`. В APK включены ARM64, ARMv7 и x86_64. Нативные Python / FFmpeg увеличивают размер APK.
 
+Чтобы получить APK меньшего размера для современных телефонов ARM64:
+
+```bash
+./gradlew assembleDebug -PtargetAbi=arm64-v8a
+```
+
+Отдельная сборка `Pocketube-1.0.0-arm64.apk` устанавливается на устройства с ABI `arm64-v8a`.
+
 GitHub Actions выполняет тесты и сборку при push в `main`; APK доступен в артефактах запуска.
 
 ## Устройство проекта
